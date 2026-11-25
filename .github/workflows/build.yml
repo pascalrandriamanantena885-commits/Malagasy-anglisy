@@ -1,36 +1,164 @@
-name: Build APK
+name: build
+
+# Ao amin'ny repo dia ireto ihany: .github/workflows/build.yml  +  joro-app.tgz
+# Ny action no manaisotra ny joro-app.tgz ao amin'ny "proj/" dia manao ny build avy eo.
+
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  build:
+  engine-test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: proj
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Download Wiktionary data (build time only)
-        continue-on-error: true
+
+      - name: Famoahana joro-app.tgz  ->  proj/
+        working-directory: ${{ github.workspace }}
         run: |
-          mkdir -p data/raw
-          curl -fL --retry 3 -o data/raw/kaikki-mg.jsonl \
-            https://kaikki.org/dictionary/Malagasy/kaikki.org-dictionary-Malagasy.jsonl
-          python tools/import_kaikki.py data/raw/kaikki-mg.jsonl data/wiktionary.csv
-      - name: Build dictionary.db
-        run: python tools/build_db.py --out app/src/main/assets/dictionary.db data/words.csv data/wiktionary.csv
+          set -e
+          if [ -f joro-app.tgz ]; then F="joro-app.tgz"
+          elif [ -f "joro app.tgz" ]; then F="joro app.tgz"
+          else F="$(ls ./*.tgz 2>/dev/null | head -n1)"; fi
+          [ -n "$F" ] || { echo "::error::Tsy hita ny joro-app.tgz ao amin'ny fototry ny repo"; exit 1; }
+          echo "Mampiasa: $F"
+          rm -rf _x proj; mkdir _x
+          tar -xzf "$F" -C _x
+          S="$(find _x -maxdepth 3 -name settings.gradle.kts | head -n1)"
+          [ -n "$S" ] || { echo "::error::Tsy hita ny settings.gradle.kts ao anaty tgz"; exit 1; }
+          mv "$(dirname "$S")" proj
+          rm -rf _x
+          ls proj
+
+      - name: Compile JORO (Linux) sy test UCI / perft / go
+        run: |
+          mkdir -p engine && tar -xzf joro.tgz -C engine
+          g++ -O2 -std=c++17 -o joro_linux engine/joro/joro.cpp
+          bash scripts/uci_test.sh ./joro_linux
+
+  apk:
+    needs: engine-test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: proj
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Famoahana joro-app.tgz  ->  proj/
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -e
+          if [ -f joro-app.tgz ]; then F="joro-app.tgz"
+          elif [ -f "joro app.tgz" ]; then F="joro app.tgz"
+          else F="$(ls ./*.tgz 2>/dev/null | head -n1)"; fi
+          [ -n "$F" ] || { echo "::error::Tsy hita ny joro-app.tgz ao amin'ny fototry ny repo"; exit 1; }
+          echo "Mampiasa: $F"
+          rm -rf _x proj; mkdir _x
+          tar -xzf "$F" -C _x
+          S="$(find _x -maxdepth 3 -name settings.gradle.kts | head -n1)"
+          [ -n "$S" ] || { echo "::error::Tsy hita ny settings.gradle.kts ao anaty tgz"; exit 1; }
+          mv "$(dirname "$S")" proj
+          rm -rf _x
+          ls proj
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: '17'
+
+      - name: Version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF_NAME#v}"; else V="0.1.${{ github.run_number }}"; fi
+          echo "VER=$V" >> "$GITHUB_ENV"
+
+      - name: Fanomanana PNG avy amin'ny SVG (pieces)
+        run: |
+          sudo apt-get update && sudo apt-get install -y librsvg2-bin
+          bash scripts/svg2png.sh
+
+      - name: Famoahana joro.tgz (moteur)  ->  engine/joro/joro.cpp
+        run: |
+          mkdir -p engine
+          tar -xzf joro.tgz -C engine
+          ls engine/joro
+
+      - name: Compile JORO (NDK) ho an'ny ABI rehetra
+        run: |
+          NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          mkdir -p dist
+          for pair in "arm64-v8a aarch64-linux-android24" "armeabi-v7a armv7a-linux-androideabi24" "x86_64 x86_64-linux-android24"; do
+            set -- $pair
+            mkdir -p app/src/main/jniLibs/$1
+            "$BIN/$2-clang++" -O3 -std=c++17 -fPIE -pie -static-libstdc++ \
+              -o app/src/main/jniLibs/$1/libjoro.so engine/joro/joro.cpp
+            cp app/src/main/jniLibs/$1/libjoro.so "dist/joro-$1"
+          done
+
+      - name: Compile Stockfish (NDK) ho integré ao anaty APK
+        run: |
+          NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          export PATH="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          git clone --depth 1 --branch sf_17.1 https://github.com/official-stockfish/Stockfish.git sf
+          cd sf/src
+          build() {  # $1 = abi, $2 = ARCH an'ny Makefile
+            make clean >/dev/null 2>&1 || true
+            make -j"$(nproc)" build ARCH="$2" COMP=ndk
+            mkdir -p "$GITHUB_WORKSPACE/proj/app/src/main/jniLibs/$1"
+            cp stockfish "$GITHUB_WORKSPACE/proj/app/src/main/jniLibs/$1/libstockfish.so"
+            cp stockfish "$GITHUB_WORKSPACE/proj/dist/stockfish-$1"
+          }
+          build arm64-v8a armv8                      # tsy maintsy
+          build armeabi-v7a armv7 || echo "armv7 Stockfish nolavina"   # tsy voatery
+
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.9"
-      - run: gradle assembleDebug --stacktrace
+          gradle-version: '8.9'
+
+      - name: Test (perft, classification, book...)
+        continue-on-error: true
+        run: gradle --no-daemon testDebugUnitTest
+
+      - name: Tahiry ny rapport test
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: proj/app/build/reports/tests
+          if-no-files-found: ignore
+
+      - name: Build APK
+        run: >
+          gradle --no-daemon assembleRelease
+          -PversionName=$VER -PversionCode=${{ github.run_number }}
+          -PgithubRepo=${{ github.repository }}
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/release/app-release.apk "dist/JORO-$VER.apk"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: app-debug
-          path: app/build/outputs/apk/debug/*.apk
+          name: JORO-${{ env.VER }}
+          path: |
+            proj/dist/*
+            proj/joro.tgz
+
+      - name: GitHub Release (rehefa tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            proj/dist/*
+            proj/joro.tgz
