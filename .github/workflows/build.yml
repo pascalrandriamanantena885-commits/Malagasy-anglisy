@@ -73,19 +73,31 @@ jobs:
           rm -rf _x
           ls proj
 
-      - name: Fanamboarana Training.kt (val base nitovy anarana)
+      - name: Fanamboarana source Kotlin (val base + JVM signature clash)
         run: |
           set -e
           T="$(find app/src/main/java -name Training.kt | head -n1)"
           [ -n "$T" ] || { echo "::error::Tsy hita ny Training.kt"; exit 1; }
-          # ovay ny anarana faharoa (String) ho "msg" ary ny fampiasana azy
+
+          # 1) val base nitovy anarana ao amin'ny applyProvisional -> ovay "msg" ny String
           sed -i \
             -e "s/val base = \"Profil provisoire/val msg = \"Profil provisoire/" \
             -e 's/"\$base /"$msg /g' \
             "$T"
-          echo "--- aorian'ny fanamboarana ---"
-          grep -n 'val msg = "Profil provisoire' "$T" || { echo "::error::Tsy nety ny fanamboarana"; exit 1; }
-          if grep -n '"\$base ' "$T"; then echo "::error::Mbola misy \$base"; exit 1; fi
+          grep -q 'val msg = "Profil provisoire' "$T" || { echo "::error::Tsy nety ny fanamboarana base->msg"; exit 1; }
+          if grep -q '"\$base ' "$T"; then echo "::error::Mbola misy \$base"; exit 1; fi
+
+          # 2) var ghostSide/raceSide/decision (setter automatique) mifandona amin'ny fun setXxx(Int)
+          #    -> avadika anarana ny fonction (ao amin'ny rakitra .kt rehetra)
+          grep -rlE 'setGhostSide|setRaceSide|setDecision' app/src --include=*.kt \
+            | xargs -r sed -i -E \
+                -e 's/\bsetGhostSide\b/chooseGhostSide/g' \
+                -e 's/\bsetRaceSide\b/chooseRaceSide/g' \
+                -e 's/\bsetDecision\b/chooseDecision/g'
+          if grep -rnE 'setGhostSide|setRaceSide|setDecision' app/src; then
+            echo "::error::Mbola misy anarana taloha"; exit 1
+          fi
+          echo "Fanamboarana vita"
 
       - uses: actions/setup-java@v4
         with:
