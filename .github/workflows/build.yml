@@ -2,7 +2,7 @@ name: build
 
 # Ao amin'ny repo dia ireto ihany: .github/workflows/build.yml  +  joro-app.tgz
 # Ny action no manaisotra ny joro-app.tgz ao amin'ny "proj/" dia manao ny build avy eo.
-# Moteur: Blind (proj/blind.tgz -> blind/blind.cpp -> libblind.so)
+# Moteur: JORO (proj/joro.tgz -> joro/joro.cpp -> libjoro.so)
 
 on:
   push:
@@ -41,11 +41,11 @@ jobs:
           rm -rf _x
           ls proj
 
-      - name: Compile Blind (Linux) sy test UCI / perft / go
+      - name: Compile JORO (Linux) sy test UCI / perft / go
         run: |
-          mkdir -p engine && tar -xzf blind.tgz -C engine
-          g++ -O2 -std=c++17 -o blind_linux engine/blind/blind.cpp
-          bash scripts/uci_test.sh ./blind_linux
+          mkdir -p engine && tar -xzf joro.tgz -C engine
+          g++ -O2 -std=c++17 -o joro_linux engine/joro/joro.cpp
+          bash scripts/uci_test.sh ./joro_linux
 
   apk:
     needs: engine-test
@@ -89,25 +89,25 @@ jobs:
           sudo apt-get update && sudo apt-get install -y librsvg2-bin
           bash scripts/svg2png.sh
 
-      - name: Famoahana blind.tgz (moteur)  ->  engine/blind/blind.cpp
+      - name: Famoahana joro.tgz (moteur)  ->  engine/joro/joro.cpp
         run: |
           mkdir -p engine
-          tar -xzf blind.tgz -C engine
-          ls engine/blind
+          tar -xzf joro.tgz -C engine
+          ls engine/joro
 
-      - name: Compile Blind (NDK) ho an'ny ABI rehetra  ->  libblind.so
+      - name: Compile JORO (NDK) ho an'ny ABI rehetra  ->  libjoro.so
         run: |
           NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
           BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
           mkdir -p dist
-          # esory ny libjoro.so taloha raha mbola misy ao amin'ny tgz
-          find app/src/main/jniLibs -name 'libjoro.so' -delete 2>/dev/null || true
+          # esory ny libblind.so taloha (Blind) raha mbola misy ao amin'ny tgz
+          find app/src/main/jniLibs -name 'libblind.so' -delete 2>/dev/null || true
           for pair in "arm64-v8a aarch64-linux-android24" "armeabi-v7a armv7a-linux-androideabi24" "x86_64 x86_64-linux-android24"; do
             set -- $pair
             mkdir -p app/src/main/jniLibs/$1
             "$BIN/$2-clang++" -O3 -std=c++17 -fPIE -pie -static-libstdc++ \
-              -o app/src/main/jniLibs/$1/libblind.so engine/blind/blind.cpp
-            cp app/src/main/jniLibs/$1/libblind.so "dist/libblind-$1.so"
+              -o app/src/main/jniLibs/$1/libjoro.so engine/joro/joro.cpp
+            cp app/src/main/jniLibs/$1/libjoro.so "dist/libjoro-$1.so"
           done
 
       - name: Compile Stockfish (NDK) ho intégré ao anaty APK (tsy mivoaka ao anaty artifact)
@@ -151,11 +151,11 @@ jobs:
         run: cp app/build/outputs/apk/release/app-release.apk "dist/JORO-$VER.apk"
 
       # Artifact 2 tsy zip (upload-artifact@v7 + archive: false => rakitra tokana ihany, ny anaran'ny rakitra no anaran'ny artifact)
-      - name: Fanomanana libblind (ABI telo) ho tgz iray
+      - name: Fanomanana libjoro (ABI telo) ho tgz iray
         run: |
           mkdir -p out
-          cp dist/libblind-*.so blind.tgz out/
-          tar -czf "libblind-$VER.tgz" -C out .
+          cp dist/libjoro-*.so joro.tgz out/
+          tar -czf "libjoro-$VER.tgz" -C out .
 
       - name: Artifact 1 - APK (tsy zip)
         uses: actions/upload-artifact@v7
@@ -163,10 +163,10 @@ jobs:
           path: proj/dist/JORO-${{ env.VER }}.apk
           archive: false
 
-      - name: Artifact 2 - libblind ABI telo + blind.tgz (tsy zip)
+      - name: Artifact 2 - libjoro ABI telo + joro.tgz (tsy zip)
         uses: actions/upload-artifact@v7
         with:
-          path: proj/libblind-${{ env.VER }}.tgz
+          path: proj/libjoro-${{ env.VER }}.tgz
           archive: false
 
       - name: GitHub Release (rehefa tag v*)
@@ -175,4 +175,4 @@ jobs:
         with:
           files: |
             proj/dist/*
-            proj/blind.tgz
+            proj/joro.tgz
