@@ -150,12 +150,24 @@ jobs:
       - name: Rename APK
         run: cp app/build/outputs/apk/release/app-release.apk "dist/JORO-$VER.apk"
 
-      - uses: actions/upload-artifact@v4
+      # Artifact 2 tsy zip (upload-artifact@v7 + archive: false => rakitra tokana ihany, ny anaran'ny rakitra no anaran'ny artifact)
+      - name: Fanomanana libblind (ABI telo) ho tgz iray
+        run: |
+          mkdir -p out
+          cp dist/libblind-*.so blind.tgz out/
+          tar -czf "libblind-$VER.tgz" -C out .
+
+      - name: Artifact 1 - APK (tsy zip)
+        uses: actions/upload-artifact@v7
         with:
-          name: JORO-${{ env.VER }}
-          path: |
-            proj/dist/*
-            proj/blind.tgz
+          path: proj/dist/JORO-${{ env.VER }}.apk
+          archive: false
+
+      - name: Artifact 2 - libblind ABI telo + blind.tgz (tsy zip)
+        uses: actions/upload-artifact@v7
+        with:
+          path: proj/libblind-${{ env.VER }}.tgz
+          archive: false
 
       - name: GitHub Release (rehefa tag v*)
         if: startsWith(github.ref, 'refs/tags/v')
