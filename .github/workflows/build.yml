@@ -2,6 +2,7 @@ name: build
 
 # Ao amin'ny repo dia ireto ihany: .github/workflows/build.yml  +  joro-app.tgz
 # Ny action no manaisotra ny joro-app.tgz ao amin'ny "proj/" dia manao ny build avy eo.
+# Moteur: Blind (proj/blind.tgz -> blind/blind.cpp -> libblind.so)
 
 on:
   push:
@@ -40,11 +41,11 @@ jobs:
           rm -rf _x
           ls proj
 
-      - name: Compile JORO (Linux) sy test UCI / perft / go
+      - name: Compile Blind (Linux) sy test UCI / perft / go
         run: |
-          mkdir -p engine && tar -xzf joro.tgz -C engine
-          g++ -O2 -std=c++17 -o joro_linux engine/joro/joro.cpp
-          bash scripts/uci_test.sh ./joro_linux
+          mkdir -p engine && tar -xzf blind.tgz -C engine
+          g++ -O2 -std=c++17 -o blind_linux engine/blind/blind.cpp
+          bash scripts/uci_test.sh ./blind_linux
 
   apk:
     needs: engine-test
@@ -73,32 +74,6 @@ jobs:
           rm -rf _x
           ls proj
 
-      - name: Fanamboarana source Kotlin (val base + JVM signature clash)
-        run: |
-          set -e
-          T="$(find app/src/main/java -name Training.kt | head -n1)"
-          [ -n "$T" ] || { echo "::error::Tsy hita ny Training.kt"; exit 1; }
-
-          # 1) val base nitovy anarana ao amin'ny applyProvisional -> ovay "msg" ny String
-          sed -i \
-            -e "s/val base = \"Profil provisoire/val msg = \"Profil provisoire/" \
-            -e 's/"\$base /"$msg /g' \
-            "$T"
-          grep -q 'val msg = "Profil provisoire' "$T" || { echo "::error::Tsy nety ny fanamboarana base->msg"; exit 1; }
-          if grep -q '"\$base ' "$T"; then echo "::error::Mbola misy \$base"; exit 1; fi
-
-          # 2) var ghostSide/raceSide/decision (setter automatique) mifandona amin'ny fun setXxx(Int)
-          #    -> avadika anarana ny fonction (ao amin'ny rakitra .kt rehetra)
-          grep -rlE 'setGhostSide|setRaceSide|setDecision' app/src --include=*.kt \
-            | xargs -r sed -i -E \
-                -e 's/\bsetGhostSide\b/chooseGhostSide/g' \
-                -e 's/\bsetRaceSide\b/chooseRaceSide/g' \
-                -e 's/\bsetDecision\b/chooseDecision/g'
-          if grep -rnE 'setGhostSide|setRaceSide|setDecision' app/src; then
-            echo "::error::Mbola misy anarana taloha"; exit 1
-          fi
-          echo "Fanamboarana vita"
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -114,26 +89,28 @@ jobs:
           sudo apt-get update && sudo apt-get install -y librsvg2-bin
           bash scripts/svg2png.sh
 
-      - name: Famoahana joro.tgz (moteur)  ->  engine/joro/joro.cpp
+      - name: Famoahana blind.tgz (moteur)  ->  engine/blind/blind.cpp
         run: |
           mkdir -p engine
-          tar -xzf joro.tgz -C engine
-          ls engine/joro
+          tar -xzf blind.tgz -C engine
+          ls engine/blind
 
-      - name: Compile JORO (NDK) ho an'ny ABI rehetra
+      - name: Compile Blind (NDK) ho an'ny ABI rehetra  ->  libblind.so
         run: |
           NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
           BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
           mkdir -p dist
+          # esory ny libjoro.so taloha raha mbola misy ao amin'ny tgz
+          find app/src/main/jniLibs -name 'libjoro.so' -delete 2>/dev/null || true
           for pair in "arm64-v8a aarch64-linux-android24" "armeabi-v7a armv7a-linux-androideabi24" "x86_64 x86_64-linux-android24"; do
             set -- $pair
             mkdir -p app/src/main/jniLibs/$1
             "$BIN/$2-clang++" -O3 -std=c++17 -fPIE -pie -static-libstdc++ \
-              -o app/src/main/jniLibs/$1/libjoro.so engine/joro/joro.cpp
-            cp app/src/main/jniLibs/$1/libjoro.so "dist/joro-$1"
+              -o app/src/main/jniLibs/$1/libblind.so engine/blind/blind.cpp
+            cp app/src/main/jniLibs/$1/libblind.so "dist/libblind-$1.so"
           done
 
-      - name: Compile Stockfish (NDK) ho intégré ao anaty APK
+      - name: Compile Stockfish (NDK) ho intégré ao anaty APK (tsy mivoaka ao anaty artifact)
         run: |
           NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
           export PATH="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
@@ -144,7 +121,6 @@ jobs:
             make -j"$(nproc)" build ARCH="$2" COMP=ndk
             mkdir -p "$GITHUB_WORKSPACE/proj/app/src/main/jniLibs/$1"
             cp stockfish "$GITHUB_WORKSPACE/proj/app/src/main/jniLibs/$1/libstockfish.so"
-            cp stockfish "$GITHUB_WORKSPACE/proj/dist/stockfish-$1"
           }
           build arm64-v8a armv8                      # tsy maintsy
           build armeabi-v7a armv7 || echo "armv7 Stockfish nolavina"   # tsy voatery
@@ -179,7 +155,7 @@ jobs:
           name: JORO-${{ env.VER }}
           path: |
             proj/dist/*
-            proj/joro.tgz
+            proj/blind.tgz
 
       - name: GitHub Release (rehefa tag v*)
         if: startsWith(github.ref, 'refs/tags/v')
@@ -187,4 +163,4 @@ jobs:
         with:
           files: |
             proj/dist/*
-            proj/joro.tgz
+            proj/blind.tgz
